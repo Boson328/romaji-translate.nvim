@@ -66,170 +66,139 @@ local function format_as_case(words, case_style)
 	end
 end
 
--- ローマ字 → ひらがな 変換テーブル
--- 長いパターンを先に試す（例: "sha" > "si"）
-local ROMAJI_TABLE = {
-	-- 特殊・拗音（3文字）
-	sha = "しゃ",
-	shi = "し",
-	shu = "しゅ",
-	she = "しぇ",
-	sho = "しょ",
-	chi = "ち",
-	thi = "てぃ",
-	tsu = "つ",
-	thi = "てぃ",
-	cha = "ちゃ",
-	chu = "ちゅ",
-	che = "ちぇ",
-	cho = "ちょ",
-	dhi = "でぃ",
-	dhu = "でゅ",
-	thi = "てぃ",
-	thu = "てゅ",
-	nya = "にゃ",
-	nyi = "にぃ",
-	nyu = "にゅ",
-	nye = "にぇ",
-	nyo = "にょ",
-	mya = "みゃ",
-	myi = "みぃ",
-	myu = "みゅ",
-	mye = "みぇ",
-	myo = "みょ",
-	rya = "りゃ",
-	ryi = "りぃ",
-	ryu = "りゅ",
-	rye = "りぇ",
-	ryo = "りょ",
-	hya = "ひゃ",
-	hyi = "ひぃ",
-	hyu = "ひゅ",
-	hye = "ひぇ",
-	hyo = "ひょ",
-	bya = "びゃ",
-	byi = "びぃ",
-	byu = "びゅ",
-	bye = "びぇ",
-	byo = "びょ",
-	pya = "ぴゃ",
-	pyi = "ぴぃ",
-	pyu = "ぴゅ",
-	pye = "ぴぇ",
-	pyo = "ぴょ",
-	kya = "きゃ",
-	kyi = "きぃ",
-	kyu = "きゅ",
-	kye = "きぇ",
-	kyo = "きょ",
-	gya = "ぎゃ",
-	gyi = "ぎぃ",
-	gyu = "ぎゅ",
-	gye = "ぎぇ",
-	gyo = "ぎょ",
-	zya = "じゃ",
-	zyi = "じぃ",
-	zyu = "じゅ",
-	zye = "じぇ",
-	zyo = "じょ",
-	jya = "じゃ",
-	jyi = "じぃ",
-	jyu = "じゅ",
-	jye = "じぇ",
-	jyo = "じょ",
-	ja = "じゃ",
-	ji = "じ",
-	ju = "じゅ",
-	je = "じぇ",
-	jo = "じょ",
-	dya = "ぢゃ",
-	dyi = "ぢぃ",
-	dyu = "ぢゅ",
-	dye = "ぢぇ",
-	dyo = "ぢょ",
+-- ローマ字→ひらがな 変換テーブル（長いパターンを先に配置）
+local ROMAJI_LIST = {
+	-- 3文字
+	{ "sha", "しゃ" },
+	{ "shi", "し" },
+	{ "shu", "しゅ" },
+	{ "she", "しぇ" },
+	{ "sho", "しょ" },
+	{ "tsu", "つ" },
+	{ "cha", "ちゃ" },
+	{ "chi", "ち" },
+	{ "chu", "ちゅ" },
+	{ "che", "ちぇ" },
+	{ "cho", "ちょ" },
+	{ "thi", "てぃ" },
+	{ "thu", "てゅ" },
+	{ "dhi", "でぃ" },
+	{ "dhu", "でゅ" },
+	{ "nya", "にゃ" },
+	{ "nyi", "にぃ" },
+	{ "nyu", "にゅ" },
+	{ "nye", "にぇ" },
+	{ "nyo", "にょ" },
+	{ "mya", "みゃ" },
+	{ "myu", "みゅ" },
+	{ "myo", "みょ" },
+	{ "rya", "りゃ" },
+	{ "ryu", "りゅ" },
+	{ "ryo", "りょ" },
+	{ "hya", "ひゃ" },
+	{ "hyu", "ひゅ" },
+	{ "hyo", "ひょ" },
+	{ "bya", "びゃ" },
+	{ "byu", "びゅ" },
+	{ "byo", "びょ" },
+	{ "pya", "ぴゃ" },
+	{ "pyu", "ぴゅ" },
+	{ "pyo", "ぴょ" },
+	{ "kya", "きゃ" },
+	{ "kyu", "きゅ" },
+	{ "kyo", "きょ" },
+	{ "gya", "ぎゃ" },
+	{ "gyu", "ぎゅ" },
+	{ "gyo", "ぎょ" },
+	{ "jya", "じゃ" },
+	{ "jyu", "じゅ" },
+	{ "jyo", "じょ" },
+	{ "dya", "ぢゃ" },
+	{ "dyu", "ぢゅ" },
+	{ "dyo", "ぢょ" },
 	-- 2文字
-	ka = "か",
-	ki = "き",
-	ku = "く",
-	ke = "け",
-	ko = "こ",
-	ga = "が",
-	gi = "ぎ",
-	gu = "ぐ",
-	ge = "げ",
-	go = "ご",
-	sa = "さ",
-	si = "し",
-	su = "す",
-	se = "せ",
-	so = "そ",
-	za = "ざ",
-	zi = "じ",
-	zu = "ず",
-	ze = "ぜ",
-	zo = "ぞ",
-	ta = "た",
-	ti = "ち",
-	te = "て",
-	to = "と",
-	da = "だ",
-	di = "ぢ",
-	du = "づ",
-	de = "で",
-	do_ = "ど",
-	na = "な",
-	ni = "に",
-	nu = "ぬ",
-	ne = "ね",
-	no = "の",
-	ha = "は",
-	hi = "ひ",
-	hu = "ふ",
-	he = "へ",
-	ho = "ほ",
-	ba = "ば",
-	bi = "び",
-	bu = "ぶ",
-	be = "べ",
-	bo = "ぼ",
-	pa = "ぱ",
-	pi = "ぴ",
-	pu = "ぷ",
-	pe = "ぺ",
-	po = "ぽ",
-	ma = "ま",
-	mi = "み",
-	mu = "む",
-	me = "め",
-	mo = "も",
-	ya = "や",
-	yu = "ゆ",
-	yo = "よ",
-	ra = "ら",
-	ri = "り",
-	ru = "る",
-	re = "れ",
-	ro = "ろ",
-	wa = "わ",
-	wi = "ゐ",
-	we = "ゑ",
-	wo = "を",
-	fa = "ふぁ",
-	fi = "ふぃ",
-	fu = "ふ",
-	fe = "ふぇ",
-	fo = "ふぉ",
-	-- 1文字母音
-	a = "あ",
-	i = "い",
-	u = "う",
-	e = "え",
-	o = "お",
-	-- ん（nの後に母音・y以外、または語末）
-	n = "ん",
+	{ "ka", "か" },
+	{ "ki", "き" },
+	{ "ku", "く" },
+	{ "ke", "け" },
+	{ "ko", "こ" },
+	{ "ga", "が" },
+	{ "gi", "ぎ" },
+	{ "gu", "ぐ" },
+	{ "ge", "げ" },
+	{ "go", "ご" },
+	{ "sa", "さ" },
+	{ "si", "し" },
+	{ "su", "す" },
+	{ "se", "せ" },
+	{ "so", "そ" },
+	{ "za", "ざ" },
+	{ "zi", "じ" },
+	{ "zu", "ず" },
+	{ "ze", "ぜ" },
+	{ "zo", "ぞ" },
+	{ "ta", "た" },
+	{ "ti", "ち" },
+	{ "te", "て" },
+	{ "to", "と" },
+	{ "da", "だ" },
+	{ "di", "ぢ" },
+	{ "du", "づ" },
+	{ "de", "で" },
+	{ "do", "ど" },
+	{ "na", "な" },
+	{ "ni", "に" },
+	{ "nu", "ぬ" },
+	{ "ne", "ね" },
+	{ "no", "の" },
+	{ "ha", "は" },
+	{ "hi", "ひ" },
+	{ "hu", "ふ" },
+	{ "he", "へ" },
+	{ "ho", "ほ" },
+	{ "ba", "ば" },
+	{ "bi", "び" },
+	{ "bu", "ぶ" },
+	{ "be", "べ" },
+	{ "bo", "ぼ" },
+	{ "pa", "ぱ" },
+	{ "pi", "ぴ" },
+	{ "pu", "ぷ" },
+	{ "pe", "ぺ" },
+	{ "po", "ぽ" },
+	{ "ma", "ま" },
+	{ "mi", "み" },
+	{ "mu", "む" },
+	{ "me", "め" },
+	{ "mo", "も" },
+	{ "ya", "や" },
+	{ "yu", "ゆ" },
+	{ "yo", "よ" },
+	{ "ra", "ら" },
+	{ "ri", "り" },
+	{ "ru", "る" },
+	{ "re", "れ" },
+	{ "ro", "ろ" },
+	{ "wa", "わ" },
+	{ "wo", "を" },
+	{ "fa", "ふぁ" },
+	{ "fi", "ふぃ" },
+	{ "fu", "ふ" },
+	{ "fe", "ふぇ" },
+	{ "fo", "ふぉ" },
+	{ "ja", "じゃ" },
+	{ "ji", "じ" },
+	{ "ju", "じゅ" },
+	{ "je", "じぇ" },
+	{ "jo", "じょ" },
+	-- 1文字母音（最後に配置）
+	{ "a", "あ" },
+	{ "i", "い" },
+	{ "u", "う" },
+	{ "e", "え" },
+	{ "o", "お" },
 }
 
--- 促音（っ）: 同じ子音が連続 (例: kk, ss, tt...)
 -- ローマ字文字列をひらがなに変換
 local function romaji_to_hiragana(str)
 	str = str:lower()
@@ -238,39 +207,47 @@ local function romaji_to_hiragana(str)
 	local len = #str
 
 	while i <= len do
-		-- 促音チェック: 同じ子音が2つ続く（nn以外）
-		if
-			i < len
-			and str:sub(i, i) == str:sub(i + 1, i + 1)
-			and str:sub(i, i):match("[bcdfghjklmnpqrstvwxyz]")
-			and str:sub(i, i) ~= "n"
-		then
+		local matched = false
+
+		-- 促音: 同じ子音が2つ続く（n を除く）
+		if i < len and str:sub(i, i) == str:sub(i + 1, i + 1) and str:sub(i, i):match("[bcdfghjklmpqrstvwxyz]") then
 			table.insert(result, "っ")
 			i = i + 1
-		-- 3文字マッチ
-		elseif i + 2 <= len and ROMAJI_TABLE[str:sub(i, i + 2)] then
-			table.insert(result, ROMAJI_TABLE[str:sub(i, i + 2)])
-			i = i + 3
-		-- 2文字マッチ
-		elseif i + 1 <= len and ROMAJI_TABLE[str:sub(i, i + 1)] then
-			table.insert(result, ROMAJI_TABLE[str:sub(i, i + 1)])
+			matched = true
+
+		-- nn → ん
+		elseif i + 1 <= len and str:sub(i, i + 1) == "nn" then
+			table.insert(result, "ん")
 			i = i + 2
+			matched = true
+
 		-- n の特殊処理: 次が母音・y でなければ「ん」
+		-- na/ni/nu/ne/no/nya 等は下のテーブルマッチに任せる
 		elseif str:sub(i, i) == "n" then
 			local next = str:sub(i + 1, i + 1)
 			if next == "" or not next:match("[aeiouy]") then
 				table.insert(result, "ん")
-			else
-				-- na/ni/... は2文字マッチで処理されるはずだが念のため
-				table.insert(result, str:sub(i, i))
+				i = i + 1
+				matched = true
 			end
-			i = i + 1
-		-- do の特殊処理（do_ キーで登録済みだが念のため）
-		elseif i + 1 <= len and str:sub(i, i + 1) == "do" then
-			table.insert(result, "ど")
-			i = i + 2
-		-- マッチしない文字はそのまま（英数字など）
-		else
+		end
+
+		-- テーブルを先頭から順に試す（長いパターンが先にあるので正しくマッチ）
+		if not matched then
+			for _, pair in ipairs(ROMAJI_LIST) do
+				local pat, hira = pair[1], pair[2]
+				local plen = #pat
+				if str:sub(i, i + plen - 1) == pat then
+					table.insert(result, hira)
+					i = i + plen
+					matched = true
+					break
+				end
+			end
+		end
+
+		-- どれにもマッチしない文字はそのまま残す
+		if not matched then
 			table.insert(result, str:sub(i, i))
 			i = i + 1
 		end
