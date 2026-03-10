@@ -507,55 +507,19 @@ function M.translate_word()
 		end
 	end
 
-	-- Blink の補完UIで候補を表示する
+	-- vim.ui.select で候補を表示
+	-- telescope-ui-select や dressing.nvim が入っていれば自動でそのUIになる
 	local function show_select(unique)
-		local blink_source = require("romaji-translate.blink_source")
-
-		-- UTF-8バイト列からUnicodeキャラクター数（blink は character = UTF-16 offset）に変換
-		local function byte_to_char(s, byte_pos)
-			-- byte_pos は 1-indexed、戻り値は 0-indexed UTF-16 offset
-			return vim.str_utfindex(s, "utf-16", byte_pos - 1, false)
-		end
-
-		local start_char = byte_to_char(line, start_col) -- 0-indexed
-		local word_chars = byte_to_char(line, end_col + 1) - start_char
-
-		-- 候補を pending ストアに保存
-		blink_source.set_pending({
-			items = unique,
-			row = pos[1],
-			start_char = start_char,
-			word_len = word_chars,
-		})
-
-		-- 単語をそのまま残してInsertモードに入り、カーソルを単語末尾に置く
-		-- blink は現在のカーソル位置の keyword を見て get_completions() を呼ぶ
-		vim.api.nvim_win_set_cursor(0, { pos[1], end_col }) -- 単語末尾（0-indexed）
-
-		local aug = vim.api.nvim_create_augroup("RomajiTranslateBlink", { clear = true })
-
-		-- InsertEnter 後に blink.show() を呼ぶ
-		vim.api.nvim_create_autocmd("InsertEnter", {
-			group = aug,
-			once = true,
-			callback = function()
-				vim.schedule(function()
-					require("blink.cmp").show({ sources = { "romaji_translate" } })
-				end)
+		vim.ui.select(unique, {
+			prompt = "翻訳候補: ",
+			format_item = function(item)
+				return string.format("%-30s  %s", item.en, item.kanji)
 			end,
-		})
-
-		-- InsertLeave でクリア（キャンセル or 確定後）
-		vim.api.nvim_create_autocmd("InsertLeave", {
-			group = aug,
-			once = true,
-			callback = function()
-				blink_source.clear_pending()
-				pcall(vim.api.nvim_del_augroup_by_name, "RomajiTranslateBlink")
-			end,
-		})
-
-		vim.cmd("startinsert!") -- ! = カーソルを現在位置の次（末尾）に置く
+		}, function(choice)
+			if choice then
+				apply_result(choice.en)
+			end
+		end)
 	end
 
 	-- 漢字候補リストを全部並列翻訳し、英語候補が揃ったら選択UIを出す
