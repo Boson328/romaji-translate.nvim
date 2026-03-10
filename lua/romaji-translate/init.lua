@@ -563,19 +563,43 @@ function M.translate_word()
 			vim.keymap.set("n", key, fn, vim.tbl_extend("force", opts, { buffer = buf }))
 		end
 
+		-- 元の編集バッファを保持（floatにフォーカスが移るため）
+		local edit_buf = vim.api.nvim_win_get_buf(0)
+		-- 現在プレビュー中の候補の長さを追跡（正確な置換のため）
+		local preview_len = #unique[1].en
+
+		-- 編集バッファの該当行をプレビュー候補で書き換える
+		local function set_preview(en)
+			local cur = vim.api.nvim_buf_get_lines(edit_buf, pos[1] - 1, pos[1], false)[1] or ""
+			local new = cur:sub(1, start_col - 1) .. en .. cur:sub(start_col + preview_len)
+			vim.api.nvim_buf_set_lines(edit_buf, pos[1] - 1, pos[1], false, { new })
+			preview_len = #en
+		end
+
+		-- 最初の候補をプレビュー表示
+		set_preview(unique[1].en)
+
 		local function move(delta)
 			selected = ((selected - 1 + delta) % #unique) + 1
 			highlight_selected()
+			set_preview(unique[selected].en)
 		end
 
 		local function confirm()
 			close_win()
-			apply_result(unique[selected].en)
+			-- プレビューがすでに書き込まれているのでカーソル位置だけ合わせる
+			vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 + #unique[selected].en - 1 })
+			if M.config.notify_on_translate then
+				vim.notify(string.format("[RomajiTranslate] %s → %s (%s)", word, unique[selected].en, case_style))
+			end
 		end
 
 		local function cancel()
+			-- 元の単語に戻す
+			local cur = vim.api.nvim_buf_get_lines(edit_buf, pos[1] - 1, pos[1], false)[1] or ""
+			local restored = cur:sub(1, start_col - 1) .. word .. cur:sub(start_col + preview_len)
+			vim.api.nvim_buf_set_lines(edit_buf, pos[1] - 1, pos[1], false, { restored })
 			close_win()
-			-- 選択なし: 何も変更しない（元の単語のまま）
 		end
 
 		map("j", function()
