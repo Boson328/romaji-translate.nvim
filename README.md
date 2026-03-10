@@ -2,9 +2,16 @@
 
 ローマ字で書いた識別子（関数名・変数名）を `:RomajiTranslate` するだけで英語に変換するNeovimプラグイン。
 
+![Image](https://github.com/user-attachments/assets/8d4e52c4-8dac-4736-beaf-0a77b1193649)
+
 - **APIキー不要** — Google翻訳の非公式エンドポイントを使用
 - **命名規則を自動検出** — 元のスタイル（snake_case / camelCase / PascalCase / kebab-case）を維持
 - **複数候補を選択** — 漢字の解釈が複数ある場合は `vim.ui.select` で選べる
+
+## 自己責任でお願いします
+AIに書かせたプラグインの為、バグがある可能性が高いです。
+また、スクレイピングのようなことをしているので、Googleがそのエンドポイントを閉じれば使えません。
+（有識者の方、なにか方法があれば教えてください）
 
 ## 動作例
 
