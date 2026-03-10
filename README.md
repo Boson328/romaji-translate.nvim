@@ -1,16 +1,28 @@
 # romaji-translate.nvim
 
-ローマ字で書いた識別子（関数名・変数名）をカーソル下で `:RomajiTranslate` するだけで英語に変換するNeovimプラグイン。
-命名規則（snake_case / camelCase / PascalCase / kebab-case）を自動検出し、元のスタイルを維持したまま変換します。
+ローマ字で書いた識別子（関数名・変数名）を `:RomajiTranslate` するだけで英語に変換するNeovimプラグイン。
+
+- **APIキー不要** — Google翻訳の非公式エンドポイントを使用
+- **命名規則を自動検出** — 元のスタイル（snake_case / camelCase / PascalCase / kebab-case）を維持
+- **複数候補を選択** — 漢字の解釈が複数ある場合は `vim.ui.select` で選べる
 
 ## 動作例
 
-| 入力 | 変換後 |
-|------|--------|
-| `torihiki_shori` | `transaction_processing` |
-| `kyakuSousa` | `customerOperation` |
-| `NyukinKanri` | `DepositManagement` |
-| `get-user-joho` | `get-user-information` |
+```
+torihiki_shori   →  transaction_processing
+kyakuSousa       →  customerOperation
+NyukinKanri      →  DepositManagement
+get-user-joho    →  get-user-information
+取引処理          →  transaction_processing
+```
+
+複数候補がある場合：
+
+```
+saiteigen  →  [ minimum_value       最低限
+               lower_limit          最低限
+               minimum              最低限  ]  ← vim.ui.select で選択
+```
 
 ## インストール
 
@@ -20,54 +32,78 @@
 {
   "yourname/romaji-translate.nvim",
   config = function()
-    require("romaji-translate").setup({
-      api_key = "YOUR_GOOGLE_TRANSLATE_API_KEY",
-      -- または環境変数 GOOGLE_TRANSLATE_API_KEY を設定すれば不要
-    })
+    require("romaji-translate").setup()
   end,
 }
 ```
 
-### 環境変数でAPIキーを渡す場合
-
-```bash
-export GOOGLE_TRANSLATE_API_KEY="AIza..."
-```
-
-`setup()` で `api_key` を省略すると自動的に環境変数から読みます。
-
 ## 使い方
 
-1. ローマ字の識別子にカーソルを置く
-2. `:RomajiTranslate` を実行
+ローマ字（または日本語）の識別子にカーソルを置いて実行：
 
-キーマップを設定したい場合：
+```vim
+:RomajiTranslate
+```
+
+キーマップの例：
 
 ```lua
 vim.keymap.set("n", "<leader>rt", "<cmd>RomajiTranslate<CR>", { desc = "ローマ字→英語変換" })
 ```
 
-## セットアップオプション
+## 設定
 
 ```lua
 require("romaji-translate").setup({
-  api_key = nil,              -- Google Translate APIキー（省略時は環境変数から取得）
-  notify_on_translate = true, -- 変換後に通知を表示するか
+  notify_on_translate = true,  -- 変換後に通知を表示するか（デフォルト: true）
+  default_case        = "snake_case",  -- 区切り文字なし（plain）の識別子に使う命名規則
+  -- "snake_case" | "camelCase" | "PascalCase" | "kebab-case"
 })
 ```
 
-## 命名規則の検出ルール
+## 命名規則の検出
 
-| 入力パターン | 検出ケース |
-|-------------|-----------|
-| `word_word` | snake_case |
-| `word-word` | kebab-case |
-| `wordWord`  | camelCase  |
-| `WordWord`  | PascalCase |
-| `word`      | plain（スペース区切り）|
+| 入力 | 検出 | 出力例 |
+|------|------|--------|
+| `word_word` | snake_case | `transaction_processing` |
+| `word-word` | kebab-case | `transaction-processing` |
+| `wordWord`  | camelCase  | `transactionProcessing`  |
+| `WordWord`  | PascalCase | `TransactionProcessing`  |
+| `word`      | plain → `default_case` を使用 | |
 
-## 必要なもの
+## 候補選択UI
 
-- Neovim 0.8+
-- `curl` コマンド
-- Google Translate API キー（Cloud Translation API v2）
+複数の英語候補がある場合は `vim.ui.select` で表示されます。
+おすすめはNoice.nvimです
+
+```lua
+-- telescope-ui-select の場合
+{ "nvim-telescope/telescope-ui-select.nvim",
+  config = function()
+    require("telescope").load_extension("ui-select")
+  end }
+
+-- dressing.nvim の場合（設定不要）
+{ "stevearc/dressing.nvim" }
+
+-- noice.nvim の場合（設定不要）
+{ "folke/noice.nvim" }
+```
+
+## 変換パイプライン
+
+```
+識別子（ローマ字）
+  └─ split（snake/camel/Pascal/kebab を分解）
+      └─ romaji → ひらがな
+          └─ Google IME API → 漢字候補（複数）
+              └─ 全候補を並列翻訳（Google翻訳）
+                  └─ 重複除去 → 1件なら即適用 / 複数なら vim.ui.select
+```
+
+日本語入力の場合はローマ字変換をスキップして直接翻訳します。
+
+## 要件
+
+- Neovim 0.9+
+- `curl`
