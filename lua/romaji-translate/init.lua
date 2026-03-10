@@ -507,23 +507,48 @@ function M.translate_word()
 		end
 	end
 
-	-- vim.ui.select で候補を表示（Noice等が自動でオーバーライドして補完UIになる）
+	-- Blink の補完UIで候補を表示する
 	local function show_select(unique)
-		local items = {}
-		for _, item in ipairs(unique) do
-			table.insert(items, { en = item.en, kanji = item.kanji })
-		end
+		local blink_source = require("romaji-translate.blink_source")
 
-		vim.ui.select(items, {
-			prompt = "翻訳候補: ",
-			format_item = function(item)
-				return string.format("%-30s  %s", item.en, item.kanji)
+		-- 候補をBlink sourceに渡す
+		blink_source.set_pending({
+			items = unique,
+			row = pos[1],
+			start_col = start_col,
+			current_text = word, -- 置換対象の元テキスト（単語）
+		})
+
+		-- 元の単語を削除してInsertモードに入り、Blinkをトリガーする
+		-- Blinkは InsertEnter + カーソル位置で自動的に get_completions() を呼ぶ
+		local new_line = line:sub(1, start_col - 1) .. line:sub(end_col + 1)
+		vim.api.nvim_set_current_line(new_line)
+		vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 })
+
+		-- InsertEnter を待ってから Blink をトリガー
+		local aug = vim.api.nvim_create_augroup("RomajiTranslateBlink", { clear = true })
+		vim.api.nvim_create_autocmd("InsertEnter", {
+			group = aug,
+			once = true,
+			callback = function()
+				vim.schedule(function()
+					-- blink の補完を手動トリガー
+					require("blink.cmp").show({ sources = { "romaji_translate" } })
+				end)
 			end,
-		}, function(choice)
-			if choice then
-				apply_result(choice.en)
-			end
-		end)
+		})
+
+		-- カーソルが動いたり InsertLeave したら候補をクリア
+		vim.api.nvim_create_autocmd({ "InsertLeave", "CursorMovedI" }, {
+			group = aug,
+			once = true,
+			callback = function()
+				blink_source.clear_pending()
+				vim.api.nvim_del_augroup_by_name("RomajiTranslateBlink")
+			end,
+		})
+
+		vim.cmd("startinsert")
 	end
 
 	-- 漢字候補リストを全部並列翻訳し、英語候補が揃ったら選択UIを出す
