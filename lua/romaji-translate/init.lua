@@ -531,21 +531,34 @@ function M.translate_word()
 				end
 
 				if #unique == 1 then
-					-- 候補が1つなら選択UIを出さずそのまま適用
+					-- 候補が1つなら補完UIを出さずそのまま適用
 					apply_result(unique[1].en)
 				else
-					-- 英語候補を選択UIで表示（漢字も併記）
-					local labels = {}
+					-- 単語を先に置換してからカーソル位置で補完ポップアップを出す
+					-- まず最初の候補で仮置換
+					apply_result(unique[1].en)
+
+					-- vim.fn.complete() 用の候補リストを構築
+					-- word: 補完後に挿入される文字列
+					-- abbr: ポップアップに表示される短縮形（英語）
+					-- menu: ポップアップ右側に表示される補足（元の漢字）
+					local items = {}
 					for _, item in ipairs(unique) do
-						table.insert(labels, string.format("%-30s  (%s)", item.en, item.kanji))
+						table.insert(items, {
+							word = item.en,
+							abbr = item.en,
+							menu = item.kanji,
+							icase = 1,
+						})
 					end
 
-					vim.ui.select(labels, {
-						prompt = "翻訳候補を選択: ",
-					}, function(choice, idx)
-						if choice and idx then
-							apply_result(unique[idx].en)
-						end
+					-- InsertEnter してから complete() を呼ぶ
+					-- (Normalモードでは complete() が動かないため)
+					vim.cmd("startinsert")
+					vim.schedule(function()
+						local new_pos = vim.api.nvim_win_get_cursor(0)
+						local new_col = new_pos[2] -- 0-indexed、単語末尾にいる
+						vim.fn.complete(new_col - #unique[1].en + 1, items)
 					end)
 				end
 			end)
