@@ -9,19 +9,19 @@
 ## 動作例
 
 ```
-torihiki_shori   →  transaction_processing
-kyakuSousa       →  customerOperation
-NyukinKanri      →  DepositManagement
-get-user-joho    →  get-user-information
-取引処理          →  transaction_processing
+torihiki_shori  →  transaction_processing
+kyakuSousa      →  customerOperation
+NyukinKanri     →  DepositManagement
+客の数          →  number_of_customers
+取引処理        →  transaction_processing
 ```
 
 複数候補がある場合：
 
 ```
-saiteigen  →  [ minimum_value       最低限
-               lower_limit          最低限
-               minimum              最低限  ]  ← vim.ui.select で選択
+sanshou  →  [ reference             参照 
+              japanese_pepper       山椒
+              tree_chants           3唱  ]  ← vim.ui.select で選択
 ```
 
 ## インストール
@@ -30,10 +30,11 @@ saiteigen  →  [ minimum_value       最低限
 
 ```lua
 {
-  "yourname/romaji-translate.nvim",
-  config = function()
-    require("romaji-translate").setup()
-  end,
+  "boson328/romaji-translate.nvim",
+  opts = {
+    notify_on_translate = true,  -- 変換後に通知を表示するか（デフォルト: true）
+    default_case        = "snake_case",  -- 区切り文字なし（plain）の識別子に使う命名規則
+  }
 }
 ```
 
@@ -49,16 +50,6 @@ saiteigen  →  [ minimum_value       最低限
 
 ```lua
 vim.keymap.set("n", "<leader>rt", "<cmd>RomajiTranslate<CR>", { desc = "ローマ字→英語変換" })
-```
-
-## 設定
-
-```lua
-require("romaji-translate").setup({
-  notify_on_translate = true,  -- 変換後に通知を表示するか（デフォルト: true）
-  default_case        = "snake_case",  -- 区切り文字なし（plain）の識別子に使う命名規則
-  -- "snake_case" | "camelCase" | "PascalCase" | "kebab-case"
-})
 ```
 
 ## 命名規則の検出
