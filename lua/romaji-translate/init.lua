@@ -9,7 +9,8 @@ M.config = {
 
 -- ローマ字の命名規則を検出
 local function detect_case(word)
-	if word:match("^%u") and word:match("%u") and not word:match("[_%-]") then
+	-- PascalCase: 大文字始まり かつ 2文字目以降にも大文字あり かつ区切り文字なし
+	if word:match("^%u") and word:match("^.+%u") and not word:match("[_%-]") then
 		return "PascalCase"
 	elseif word:match("^%l") and word:match("%u") then
 		return "camelCase"
@@ -262,9 +263,9 @@ end
 
 -- URL エンコード
 local function url_encode(str)
-	return str:gsub("([^%w%-%.%_%~ ])", function(c)
+	return str:gsub("([^%w%-%.%_%~])", function(c)
 		return string.format("%%%02X", string.byte(c))
-	end):gsub(" ", "+")
+	end)
 end
 
 -- Google IME 非公式API: ひらがな → 漢字変換候補リストを返す
@@ -284,6 +285,10 @@ local function hiragana_to_kanji_candidates(text, callback)
 			end
 
 			local raw = table.concat(data, "")
+			if raw:gsub("%s+", "") == "" then
+				callback({ text })
+				return
+			end
 			local ok, decoded = pcall(vim.fn.json_decode, raw)
 			if not ok or type(decoded) ~= "table" then
 				callback({ text })
@@ -366,6 +371,10 @@ local function translate_text(text, callback)
 			end
 
 			local raw = table.concat(data, "")
+			if raw:gsub("%s+", "") == "" then
+				vim.notify("[RomajiTranslate] レスポンスが空です", vim.log.levels.ERROR)
+				return
+			end
 			local ok, decoded = pcall(vim.fn.json_decode, raw)
 			if not ok or type(decoded) ~= "table" then
 				vim.notify("[RomajiTranslate] JSONパースエラー: " .. raw, vim.log.levels.ERROR)
@@ -375,14 +384,16 @@ local function translate_text(text, callback)
 			local translated = decoded[1] and decoded[1][1] and decoded[1][1][1]
 
 			if translated and translated ~= "" then
-				callback(translated)
+				callback(translated, false)
 			else
 				vim.notify("[RomajiTranslate] 翻訳結果が取得できませんでした", vim.log.levels.ERROR)
+				callback(nil, true)
 			end
 		end,
 		on_stderr = function(_, data)
 			if data and #data > 0 and data[1] ~= "" then
 				vim.notify("[RomajiTranslate] curl エラー: " .. table.concat(data, ""), vim.log.levels.ERROR)
+				callback(nil, true)
 			end
 		end,
 	})
@@ -419,19 +430,10 @@ local function get_word_range(line, col)
 	-- カーソル位置の文字種を判定
 	local is_jp = is_japanese_char(line, col + 1)
 
-	local function is_word_byte(pos)
-		if is_jp then
-			return is_japanese_char(line, pos)
-		else
-			return is_ascii_word_char(line:sub(pos, pos))
-		end
-	end
-
 	-- 開始位置を左に伸ばす
 	local start_col = col + 1 -- 1-indexed
 	while start_col > 1 do
 		if is_jp then
-			-- 日本語は3バイト単位で戻る
 			local prev = start_col - 3
 			if prev >= 1 and is_japanese_char(line, prev) then
 				start_col = prev
@@ -447,28 +449,25 @@ local function get_word_range(line, col)
 		end
 	end
 
-	-- 終了位置を右に伸ばす
-	local end_col = col + 1 -- 1-indexed（inclusive）
-	while end_col < len do
+	-- 終了位置を右に伸ばす（end_col は文字の先頭バイト位置、1-indexed）
+	local end_col = col + 1
+	while true do
 		if is_jp then
 			local next = end_col + 3
 			if next <= len and is_japanese_char(line, next) then
 				end_col = next
 			else
-				-- 3バイト文字の末尾まで含める
-				end_col = end_col + 2
+				-- 現在の文字の末尾バイトまで含める（3バイト文字なので +2）
+				end_col = math.min(end_col + 2, len)
 				break
 			end
 		else
-			if is_ascii_word_char(line:sub(end_col + 1, end_col + 1)) then
+			if end_col < len and is_ascii_word_char(line:sub(end_col + 1, end_col + 1)) then
 				end_col = end_col + 1
 			else
 				break
 			end
 		end
-	end
-	if is_jp then
-		end_col = end_col + 2 -- 3バイト文字の末尾
 	end
 
 	return start_col, end_col
@@ -497,9 +496,10 @@ function M.translate_word()
 	-- 日本語かどうか判定してパイプラインを分岐
 	local is_jp_input = is_japanese_char(word, 1)
 
-	-- 結果を現在行に適用する
+	-- 結果を現在行に適用する（非同期後なので行を取り直す）
 	local function apply_result(result)
-		local new_line = line:sub(1, start_col - 1) .. result .. line:sub(end_col + 1)
+		local current_line = vim.api.nvim_get_current_line()
+		local new_line = current_line:sub(1, start_col - 1) .. result .. current_line:sub(end_col + 1)
 		vim.api.nvim_set_current_line(new_line)
 		vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 + #result - 1 })
 		if M.config.notify_on_translate then
@@ -554,13 +554,15 @@ function M.translate_word()
 		end
 
 		for _, kanji in ipairs(kanji_candidates) do
-			translate_text(kanji, function(translated)
-				local en_words = english_to_words(translated)
-				if #en_words > 0 then
-					table.insert(en_results, {
-						kanji = kanji,
-						en = format_as_case(en_words, case_style),
-					})
+			translate_text(kanji, function(translated, err)
+				if not err then
+					local en_words = english_to_words(translated)
+					if #en_words > 0 then
+						table.insert(en_results, {
+							kanji = kanji,
+							en = format_as_case(en_words, case_style),
+						})
+					end
 				end
 				done = done + 1
 				if done == total then
