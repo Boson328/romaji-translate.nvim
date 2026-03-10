@@ -555,15 +555,20 @@ function M.translate_word()
 						})
 					end
 
-					-- complete() はInsertモードでしか動かないので
-					-- <C-x><C-z> で補完をリセットしつつInsertモードに入り、
-					-- その後すぐ complete() を呼ぶ
-					-- カーソルは apply_result() で単語末尾にいる想定
+					-- complete() はInsertモードでしか動かないため
+					-- autocmd で InsertEnter を待ってから呼ぶ
 					local complete_col = start_col -- 1-indexed、単語の開始バイト位置
-					vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-x><C-z>", true, false, true), "n", false)
-					vim.schedule(function()
-						vim.fn.complete(complete_col, items)
-					end)
+					local aug = vim.api.nvim_create_augroup("RomajiTranslateComplete", { clear = true })
+					vim.api.nvim_create_autocmd("InsertEnter", {
+						group = aug,
+						once = true,
+						callback = function()
+							vim.schedule(function()
+								vim.fn.complete(complete_col, items)
+							end)
+						end,
+					})
+					vim.cmd("startinsert")
 				end
 			end)
 		end
