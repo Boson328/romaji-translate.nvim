@@ -507,122 +507,23 @@ function M.translate_word()
 		end
 	end
 
-	-- floating window で候補を表示し、選択したものを適用する
-	local function show_float_select(unique)
-		local buf = vim.api.nvim_create_buf(false, true)
+	-- vim.ui.select で候補を表示（Noice等が自動でオーバーライドして補完UIになる）
+	local function show_select(unique)
+		local items = {}
+		for _, item in ipairs(unique) do
+			table.insert(items, { en = item.en, kanji = item.kanji })
+		end
 
-		-- ウィンドウの幅: 英語候補 + 漢字の最大幅に合わせる
-		local max_w = 0
-		local lines = {}
-		for i, item in ipairs(unique) do
-			local label = string.format("%d: %-30s %s", i, item.en, item.kanji)
-			table.insert(lines, label)
-			if #label > max_w then
-				max_w = #label
+		vim.ui.select(items, {
+			prompt = "翻訳候補: ",
+			format_item = function(item)
+				return string.format("%-30s  %s", item.en, item.kanji)
+			end,
+		}, function(choice)
+			if choice then
+				apply_result(choice.en)
 			end
-		end
-		vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-
-		-- カーソル直下に floating window を出す
-		local cur_pos = vim.api.nvim_win_get_cursor(0)
-		local win = vim.api.nvim_open_win(buf, false, {
-			relative = "cursor",
-			row = 1,
-			col = 0,
-			width = max_w + 2,
-			height = #lines,
-			style = "minimal",
-			border = "rounded",
-			title = " 翻訳候補 ",
-			title_pos = "center",
-		})
-
-		-- ハイライト
-		vim.api.nvim_win_set_option(win, "winhl", "Normal:Pmenu,FloatBorder:Pmenu")
-
-		local selected = 1
-
-		local function highlight_selected()
-			vim.api.nvim_buf_clear_namespace(buf, -1, 0, -1)
-			vim.api.nvim_buf_add_highlight(buf, -1, "PmenuSel", selected - 1, 0, -1)
-		end
-		highlight_selected()
-
-		local function close_win()
-			if vim.api.nvim_win_is_valid(win) then
-				vim.api.nvim_win_close(win, true)
-			end
-			if vim.api.nvim_buf_is_valid(buf) then
-				vim.api.nvim_buf_delete(buf, { force = true })
-			end
-		end
-
-		-- キーマップ: j/k/<C-n>/<C-p> で移動、Enter/<C-y> で確定、q/Esc/<C-e> でキャンセル
-		local opts = { nowait = true, noremap = true, silent = true }
-		local function map(key, fn)
-			vim.keymap.set("n", key, fn, vim.tbl_extend("force", opts, { buffer = buf }))
-		end
-
-		-- 元の編集バッファを保持（floatにフォーカスが移るため）
-		local edit_buf = vim.api.nvim_win_get_buf(0)
-		-- 現在プレビュー中の候補の長さを追跡（正確な置換のため）
-		local preview_len = #unique[1].en
-
-		-- 編集バッファの該当行をプレビュー候補で書き換える
-		local function set_preview(en)
-			local cur = vim.api.nvim_buf_get_lines(edit_buf, pos[1] - 1, pos[1], false)[1] or ""
-			local new = cur:sub(1, start_col - 1) .. en .. cur:sub(start_col + preview_len)
-			vim.api.nvim_buf_set_lines(edit_buf, pos[1] - 1, pos[1], false, { new })
-			preview_len = #en
-		end
-
-		-- 最初の候補をプレビュー表示
-		set_preview(unique[1].en)
-
-		local function move(delta)
-			selected = ((selected - 1 + delta) % #unique) + 1
-			highlight_selected()
-			set_preview(unique[selected].en)
-		end
-
-		local function confirm()
-			close_win()
-			-- プレビューがすでに書き込まれているのでカーソル位置だけ合わせる
-			vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 + #unique[selected].en - 1 })
-			if M.config.notify_on_translate then
-				vim.notify(string.format("[RomajiTranslate] %s → %s (%s)", word, unique[selected].en, case_style))
-			end
-		end
-
-		local function cancel()
-			-- 元の単語に戻す
-			local cur = vim.api.nvim_buf_get_lines(edit_buf, pos[1] - 1, pos[1], false)[1] or ""
-			local restored = cur:sub(1, start_col - 1) .. word .. cur:sub(start_col + preview_len)
-			vim.api.nvim_buf_set_lines(edit_buf, pos[1] - 1, pos[1], false, { restored })
-			close_win()
-		end
-
-		map("j", function()
-			move(1)
 		end)
-		map("k", function()
-			move(-1)
-		end)
-		map("<C-n>", function()
-			move(1)
-		end)
-		map("<C-p>", function()
-			move(-1)
-		end)
-		map("<CR>", confirm)
-		map("<C-y>", confirm)
-		map("q", cancel)
-		map("<Esc>", cancel)
-		map("<C-e>", cancel)
-
-		-- floating window にフォーカスを移す
-		vim.api.nvim_set_current_win(win)
-		vim.api.nvim_win_set_cursor(win, { selected, 0 })
 	end
 
 	-- 漢字候補リストを全部並列翻訳し、英語候補が揃ったら選択UIを出す
@@ -651,7 +552,7 @@ function M.translate_word()
 				if #unique == 1 then
 					apply_result(unique[1].en)
 				else
-					show_float_select(unique)
+					show_select(unique)
 				end
 			end)
 		end
