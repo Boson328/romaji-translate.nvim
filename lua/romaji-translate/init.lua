@@ -267,8 +267,9 @@ local function url_encode(str)
 	end):gsub(" ", "+")
 end
 
--- Google IME 非公式API: ひらがな → 漢字変換
-local function hiragana_to_kanji(text, callback)
+-- Google IME 非公式API: ひらがな → 漢字変換候補リストを返す
+-- callback(candidates): candidates は文字列のリスト（各候補の組み合わせ）
+local function hiragana_to_kanji_candidates(text, callback)
 	local encoded = url_encode(text)
 	local url = string.format("https://www.google.com/transliterate?langpair=ja-Hira|ja&text=%s", encoded)
 
@@ -278,34 +279,72 @@ local function hiragana_to_kanji(text, callback)
 		stdout_buffered = true,
 		on_stdout = function(_, data)
 			if not data or #data == 0 then
-				callback(text) -- 失敗時はひらがなのまま続行
+				callback({ text })
 				return
 			end
 
 			local raw = table.concat(data, "")
 			local ok, decoded = pcall(vim.fn.json_decode, raw)
 			if not ok or type(decoded) ~= "table" then
-				callback(text) -- 失敗時はひらがなのまま続行
+				callback({ text })
 				return
 			end
 
-			-- レスポンス例: [["とりひき",["取引","取り引き"]],["しょり",["処理"]]]
-			-- 各セグメントの最初の候補を結合する
-			local kanji_parts = {}
+			-- レスポンス例: [["とりひき",["取引","取り引き"]],["しょり",["処理","所理"]]]
+			-- セグメントごとに候補リストを収集し、組み合わせを生成する
+			-- 組み合わせ数が爆発しないよう各セグメント最大3候補に制限
+			local MAX_CANDS = 3
+			local segments = {}
 			for _, segment in ipairs(decoded) do
-				local candidates = segment[2]
-				if candidates and candidates[1] then
-					table.insert(kanji_parts, candidates[1])
-				elseif segment[1] then
-					table.insert(kanji_parts, segment[1])
+				local seg_cands = {}
+				local raw_cands = segment[2]
+				if raw_cands and #raw_cands > 0 then
+					for j = 1, math.min(#raw_cands, MAX_CANDS) do
+						table.insert(seg_cands, raw_cands[j])
+					end
+				else
+					table.insert(seg_cands, segment[1] or "")
+				end
+				table.insert(segments, seg_cands)
+			end
+
+			-- 全セグメントの候補を組み合わせて候補文字列を生成（最大10件）
+			local MAX_RESULTS = 10
+			local results = {}
+			local seen = {}
+
+			local function combine(seg_idx, current)
+				if #results >= MAX_RESULTS then
+					return
+				end
+				if seg_idx > #segments then
+					local s = table.concat(current, "")
+					if not seen[s] then
+						seen[s] = true
+						table.insert(results, s)
+					end
+					return
+				end
+				for _, cand in ipairs(segments[seg_idx]) do
+					table.insert(current, cand)
+					combine(seg_idx + 1, current)
+					table.remove(current)
+					if #results >= MAX_RESULTS then
+						return
+					end
 				end
 			end
 
-			local kanji_text = table.concat(kanji_parts, "")
-			callback(kanji_text ~= "" and kanji_text or text)
+			combine(1, {})
+
+			if #results == 0 then
+				callback({ text })
+			else
+				callback(results)
+			end
 		end,
 		on_stderr = function(_, _)
-			callback(text) -- 失敗時はひらがなのまま続行
+			callback({ text })
 		end,
 	})
 end
@@ -492,8 +531,21 @@ function M.translate_word()
 		end
 		local hiragana_text = table.concat(hiragana_parts, " ")
 
-		hiragana_to_kanji(hiragana_text, function(kanji_text)
-			do_translate(kanji_text)
+		hiragana_to_kanji_candidates(hiragana_text, function(candidates)
+			if #candidates == 1 then
+				-- 候補が1つだけなら選択UIを出さずそのまま翻訳
+				do_translate(candidates[1])
+			else
+				vim.schedule(function()
+					vim.ui.select(candidates, {
+						prompt = "漢字候補を選択: ",
+					}, function(choice)
+						if choice then
+							do_translate(choice)
+						end
+					end)
+				end)
+			end
 		end)
 	end
 end
