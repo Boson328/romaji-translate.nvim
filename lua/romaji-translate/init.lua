@@ -359,30 +359,106 @@ local function english_to_words(text)
 	return words
 end
 
+-- 文字がASCII英数字・記号（ローマ字識別子）かどうか
+local function is_ascii_word_char(c)
+	return c:match("[%w_%-]") ~= nil
+end
+
+-- 文字が日本語（ひらがな・カタカナ・漢字）かどうか（UTF-8バイト列で判定）
+-- 日本語は基本的に 3バイト文字（0xE3...）
+local function is_japanese_char(s, pos)
+	local b = s:byte(pos)
+	return b and b >= 0xE3 and b <= 0xEF
+end
+
+-- カーソル位置から単語範囲をバイト単位で取得
+-- ASCII識別子と日本語文字を両方サポート
+local function get_word_range(line, col)
+	-- col は 0-indexed バイト位置
+	local len = #line
+
+	-- カーソル位置の文字種を判定
+	local is_jp = is_japanese_char(line, col + 1)
+
+	local function is_word_byte(pos)
+		if is_jp then
+			return is_japanese_char(line, pos)
+		else
+			return is_ascii_word_char(line:sub(pos, pos))
+		end
+	end
+
+	-- 開始位置を左に伸ばす
+	local start_col = col + 1 -- 1-indexed
+	while start_col > 1 do
+		if is_jp then
+			-- 日本語は3バイト単位で戻る
+			local prev = start_col - 3
+			if prev >= 1 and is_japanese_char(line, prev) then
+				start_col = prev
+			else
+				break
+			end
+		else
+			if is_ascii_word_char(line:sub(start_col - 1, start_col - 1)) then
+				start_col = start_col - 1
+			else
+				break
+			end
+		end
+	end
+
+	-- 終了位置を右に伸ばす
+	local end_col = col + 1 -- 1-indexed（inclusive）
+	while end_col < len do
+		if is_jp then
+			local next = end_col + 3
+			if next <= len and is_japanese_char(line, next) then
+				end_col = next
+			else
+				-- 3バイト文字の末尾まで含める
+				end_col = end_col + 2
+				break
+			end
+		else
+			if is_ascii_word_char(line:sub(end_col + 1, end_col + 1)) then
+				end_col = end_col + 1
+			else
+				break
+			end
+		end
+	end
+	if is_jp then
+		end_col = end_col + 2 -- 3バイト文字の末尾
+	end
+
+	return start_col, end_col
+end
+
 -- メイン: カーソル下の単語を翻訳して置換
 function M.translate_word()
-	local word = vim.fn.expand("<cword>")
+	local pos = vim.api.nvim_win_get_cursor(0)
+	local line = vim.api.nvim_get_current_line()
+	local col = pos[2] -- 0-indexed バイト位置
+
+	-- 単語範囲を取得（ASCII / 日本語どちらも対応）
+	local start_col, end_col = get_word_range(line, col)
+	local word = line:sub(start_col, end_col)
+
 	if word == "" then
 		vim.notify("[RomajiTranslate] カーソル下に単語がありません", vim.log.levels.WARN)
 		return
 	end
 
 	local case_style = detect_case(word)
-	-- "plain" のときはデフォルトの命名規則を使う
 	if case_style == "plain" then
 		case_style = M.config.default_case
 	end
-	local parts = split_identifier(word)
 
-	-- 各パーツをローマ字→ひらがなに変換してスペースで結合
-	local hiragana_parts = {}
-	for _, part in ipairs(parts) do
-		table.insert(hiragana_parts, romaji_to_hiragana(part))
-	end
-	local hiragana_text = table.concat(hiragana_parts, " ")
+	-- 日本語かどうか判定してパイプラインを分岐
+	local is_jp_input = is_japanese_char(word, 1)
 
-	-- ひらがな → 漢字 → 英語 の順に変換
-	hiragana_to_kanji(hiragana_text, function(kanji_text)
+	local function do_translate(kanji_text)
 		translate_text(kanji_text, function(translated)
 			local en_words = english_to_words(translated)
 			if #en_words == 0 then
@@ -393,42 +469,33 @@ function M.translate_word()
 			local result = format_as_case(en_words, case_style)
 
 			vim.schedule(function()
-				local pos = vim.api.nvim_win_get_cursor(0)
-				local line = vim.api.nvim_get_current_line()
-				local col = pos[2]
-
-				local start_col = col
-				while start_col > 0 and line:sub(start_col, start_col):match("[%w_%-]") do
-					start_col = start_col - 1
-				end
-				if not line:sub(start_col, start_col):match("[%w_%-]") then
-					start_col = start_col + 1
-				end
-
-				local end_col = col + 1
-				while end_col <= #line and line:sub(end_col, end_col):match("[%w_%-]") do
-					end_col = end_col + 1
-				end
-
-				local new_line = line:sub(1, start_col - 1) .. result .. line:sub(end_col)
+				local new_line = line:sub(1, start_col - 1) .. result .. line:sub(end_col + 1)
 				vim.api.nvim_set_current_line(new_line)
 				vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 + #result - 1 })
 
 				if M.config.notify_on_translate then
-					vim.notify(
-						string.format(
-							"[RomajiTranslate] %s → %s → %s → %s (%s)",
-							word,
-							hiragana_text,
-							kanji_text,
-							result,
-							case_style
-						)
-					)
+					vim.notify(string.format("[RomajiTranslate] %s → %s (%s)", word, result, case_style))
 				end
 			end)
 		end)
-	end)
+	end
+
+	if is_jp_input then
+		-- 日本語入力: そのまま翻訳へ
+		do_translate(word)
+	else
+		-- ローマ字入力: ローマ字→ひらがな→漢字→英語
+		local parts = split_identifier(word)
+		local hiragana_parts = {}
+		for _, part in ipairs(parts) do
+			table.insert(hiragana_parts, romaji_to_hiragana(part))
+		end
+		local hiragana_text = table.concat(hiragana_parts, " ")
+
+		hiragana_to_kanji(hiragana_text, function(kanji_text)
+			do_translate(kanji_text)
+		end)
+	end
 end
 
 -- セットアップ
