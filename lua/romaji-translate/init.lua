@@ -5,7 +5,6 @@ M.config = {
 }
 
 -- ローマ字の命名規則を検出
--- 戻り値: "snake_case" | "camelCase" | "PascalCase" | "kebab-case" | "plain"
 local function detect_case(word)
 	if word:match("^%u") and word:match("%u") and not word:match("[_%-]") then
 		return "PascalCase"
@@ -20,10 +19,9 @@ local function detect_case(word)
 	end
 end
 
--- snake_case / kebab-case などをスペース区切りの単語に分解
+-- snake_case / kebab-case / camelCase などをスペース区切りの単語に分解
 local function split_identifier(word)
 	local parts = {}
-
 	if word:match("[_%-]") then
 		for part in word:gmatch("[^_%-]+") do
 			table.insert(parts, part)
@@ -38,7 +36,6 @@ local function split_identifier(word)
 	else
 		table.insert(parts, word)
 	end
-
 	return parts
 end
 
@@ -69,6 +66,219 @@ local function format_as_case(words, case_style)
 	end
 end
 
+-- ローマ字 → ひらがな 変換テーブル
+-- 長いパターンを先に試す（例: "sha" > "si"）
+local ROMAJI_TABLE = {
+	-- 特殊・拗音（3文字）
+	sha = "しゃ",
+	shi = "し",
+	shu = "しゅ",
+	she = "しぇ",
+	sho = "しょ",
+	chi = "ち",
+	thi = "てぃ",
+	tsu = "つ",
+	thi = "てぃ",
+	cha = "ちゃ",
+	chu = "ちゅ",
+	che = "ちぇ",
+	cho = "ちょ",
+	dhi = "でぃ",
+	dhu = "でゅ",
+	thi = "てぃ",
+	thu = "てゅ",
+	nya = "にゃ",
+	nyi = "にぃ",
+	nyu = "にゅ",
+	nye = "にぇ",
+	nyo = "にょ",
+	mya = "みゃ",
+	myi = "みぃ",
+	myu = "みゅ",
+	mye = "みぇ",
+	myo = "みょ",
+	rya = "りゃ",
+	ryi = "りぃ",
+	ryu = "りゅ",
+	rye = "りぇ",
+	ryo = "りょ",
+	hya = "ひゃ",
+	hyi = "ひぃ",
+	hyu = "ひゅ",
+	hye = "ひぇ",
+	hyo = "ひょ",
+	bya = "びゃ",
+	byi = "びぃ",
+	byu = "びゅ",
+	bye = "びぇ",
+	byo = "びょ",
+	pya = "ぴゃ",
+	pyi = "ぴぃ",
+	pyu = "ぴゅ",
+	pye = "ぴぇ",
+	pyo = "ぴょ",
+	kya = "きゃ",
+	kyi = "きぃ",
+	kyu = "きゅ",
+	kye = "きぇ",
+	kyo = "きょ",
+	gya = "ぎゃ",
+	gyi = "ぎぃ",
+	gyu = "ぎゅ",
+	gye = "ぎぇ",
+	gyo = "ぎょ",
+	zya = "じゃ",
+	zyi = "じぃ",
+	zyu = "じゅ",
+	zye = "じぇ",
+	zyo = "じょ",
+	jya = "じゃ",
+	jyi = "じぃ",
+	jyu = "じゅ",
+	jye = "じぇ",
+	jyo = "じょ",
+	ja = "じゃ",
+	ji = "じ",
+	ju = "じゅ",
+	je = "じぇ",
+	jo = "じょ",
+	dya = "ぢゃ",
+	dyi = "ぢぃ",
+	dyu = "ぢゅ",
+	dye = "ぢぇ",
+	dyo = "ぢょ",
+	-- 2文字
+	ka = "か",
+	ki = "き",
+	ku = "く",
+	ke = "け",
+	ko = "こ",
+	ga = "が",
+	gi = "ぎ",
+	gu = "ぐ",
+	ge = "げ",
+	go = "ご",
+	sa = "さ",
+	si = "し",
+	su = "す",
+	se = "せ",
+	so = "そ",
+	za = "ざ",
+	zi = "じ",
+	zu = "ず",
+	ze = "ぜ",
+	zo = "ぞ",
+	ta = "た",
+	ti = "ち",
+	te = "て",
+	to = "と",
+	da = "だ",
+	di = "ぢ",
+	du = "づ",
+	de = "で",
+	do_ = "ど",
+	na = "な",
+	ni = "に",
+	nu = "ぬ",
+	ne = "ね",
+	no = "の",
+	ha = "は",
+	hi = "ひ",
+	hu = "ふ",
+	he = "へ",
+	ho = "ほ",
+	ba = "ば",
+	bi = "び",
+	bu = "ぶ",
+	be = "べ",
+	bo = "ぼ",
+	pa = "ぱ",
+	pi = "ぴ",
+	pu = "ぷ",
+	pe = "ぺ",
+	po = "ぽ",
+	ma = "ま",
+	mi = "み",
+	mu = "む",
+	me = "め",
+	mo = "も",
+	ya = "や",
+	yu = "ゆ",
+	yo = "よ",
+	ra = "ら",
+	ri = "り",
+	ru = "る",
+	re = "れ",
+	ro = "ろ",
+	wa = "わ",
+	wi = "ゐ",
+	we = "ゑ",
+	wo = "を",
+	fa = "ふぁ",
+	fi = "ふぃ",
+	fu = "ふ",
+	fe = "ふぇ",
+	fo = "ふぉ",
+	-- 1文字母音
+	a = "あ",
+	i = "い",
+	u = "う",
+	e = "え",
+	o = "お",
+	-- ん（nの後に母音・y以外、または語末）
+	n = "ん",
+}
+
+-- 促音（っ）: 同じ子音が連続 (例: kk, ss, tt...)
+-- ローマ字文字列をひらがなに変換
+local function romaji_to_hiragana(str)
+	str = str:lower()
+	local result = {}
+	local i = 1
+	local len = #str
+
+	while i <= len do
+		-- 促音チェック: 同じ子音が2つ続く（nn以外）
+		if
+			i < len
+			and str:sub(i, i) == str:sub(i + 1, i + 1)
+			and str:sub(i, i):match("[bcdfghjklmnpqrstvwxyz]")
+			and str:sub(i, i) ~= "n"
+		then
+			table.insert(result, "っ")
+			i = i + 1
+		-- 3文字マッチ
+		elseif i + 2 <= len and ROMAJI_TABLE[str:sub(i, i + 2)] then
+			table.insert(result, ROMAJI_TABLE[str:sub(i, i + 2)])
+			i = i + 3
+		-- 2文字マッチ
+		elseif i + 1 <= len and ROMAJI_TABLE[str:sub(i, i + 1)] then
+			table.insert(result, ROMAJI_TABLE[str:sub(i, i + 1)])
+			i = i + 2
+		-- n の特殊処理: 次が母音・y でなければ「ん」
+		elseif str:sub(i, i) == "n" then
+			local next = str:sub(i + 1, i + 1)
+			if next == "" or not next:match("[aeiouy]") then
+				table.insert(result, "ん")
+			else
+				-- na/ni/... は2文字マッチで処理されるはずだが念のため
+				table.insert(result, str:sub(i, i))
+			end
+			i = i + 1
+		-- do の特殊処理（do_ キーで登録済みだが念のため）
+		elseif i + 1 <= len and str:sub(i, i + 1) == "do" then
+			table.insert(result, "ど")
+			i = i + 2
+		-- マッチしない文字はそのまま（英数字など）
+		else
+			table.insert(result, str:sub(i, i))
+			i = i + 1
+		end
+	end
+
+	return table.concat(result, "")
+end
+
 -- URL エンコード
 local function url_encode(str)
 	return str:gsub("([^%w%-%.%_%~ ])", function(c)
@@ -77,12 +287,8 @@ local function url_encode(str)
 end
 
 -- Google Translate 非公式エンドポイント（APIキー不要）
--- レスポンス例: [[["Hello","こんにちは",...]],null,"en",...]
 local function translate_text(text, callback)
-	-- ローマ字をスペース区切りに正規化
-	local spaced = text:gsub("[_%-]", " "):gsub("(%u)", " %1"):lower():gsub("^ ", "")
-
-	local encoded = url_encode(spaced)
+	local encoded = url_encode(text)
 	local url =
 		string.format("https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=ja&tl=en&q=%s", encoded)
 
@@ -103,7 +309,6 @@ local function translate_text(text, callback)
 				return
 			end
 
-			-- レスポンス構造: [[["翻訳結果", "原文", ...], ...], null, "ja", ...]
 			local translated = decoded[1] and decoded[1][1] and decoded[1][1][1]
 
 			if translated and translated ~= "" then
@@ -140,9 +345,15 @@ function M.translate_word()
 
 	local case_style = detect_case(word)
 	local parts = split_identifier(word)
-	local romaji_text = table.concat(parts, " ")
 
-	translate_text(romaji_text, function(translated)
+	-- 各パーツをローマ字→ひらがなに変換してスペースで結合
+	local hiragana_parts = {}
+	for _, part in ipairs(parts) do
+		table.insert(hiragana_parts, romaji_to_hiragana(part))
+	end
+	local hiragana_text = table.concat(hiragana_parts, " ")
+
+	translate_text(hiragana_text, function(translated)
 		local en_words = english_to_words(translated)
 		if #en_words == 0 then
 			vim.notify("[RomajiTranslate] 英語の単語が取得できませんでした", vim.log.levels.ERROR)
@@ -156,7 +367,6 @@ function M.translate_word()
 			local line = vim.api.nvim_get_current_line()
 			local col = pos[2]
 
-			-- 単語の開始・終了位置を探す
 			local start_col = col
 			while start_col > 0 and line:sub(start_col, start_col):match("[%w_%-]") do
 				start_col = start_col - 1
@@ -175,7 +385,9 @@ function M.translate_word()
 			vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 + #result - 1 })
 
 			if M.config.notify_on_translate then
-				vim.notify(string.format("[RomajiTranslate] %s → %s (%s)", word, result, case_style))
+				vim.notify(
+					string.format("[RomajiTranslate] %s → %s → %s (%s)", word, hiragana_text, result, case_style)
+				)
 			end
 		end)
 	end)
