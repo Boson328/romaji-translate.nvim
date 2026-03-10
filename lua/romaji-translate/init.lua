@@ -511,44 +511,51 @@ function M.translate_word()
 	local function show_select(unique)
 		local blink_source = require("romaji-translate.blink_source")
 
-		-- 候補をBlink sourceに渡す
+		-- UTF-8バイト列からUnicodeキャラクター数（blink は character = UTF-16 offset）に変換
+		local function byte_to_char(s, byte_pos)
+			-- byte_pos は 1-indexed、戻り値は 0-indexed UTF-16 offset
+			return vim.str_utfindex(s, "utf-16", byte_pos - 1, false)
+		end
+
+		local start_char = byte_to_char(line, start_col) -- 0-indexed
+		local word_chars = byte_to_char(line, end_col + 1) - start_char
+
+		-- 候補を pending ストアに保存
 		blink_source.set_pending({
 			items = unique,
 			row = pos[1],
-			start_col = start_col,
-			current_text = word, -- 置換対象の元テキスト（単語）
+			start_char = start_char,
+			word_len = word_chars,
 		})
 
-		-- 元の単語を削除してInsertモードに入り、Blinkをトリガーする
-		-- Blinkは InsertEnter + カーソル位置で自動的に get_completions() を呼ぶ
-		local new_line = line:sub(1, start_col - 1) .. line:sub(end_col + 1)
-		vim.api.nvim_set_current_line(new_line)
-		vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 })
+		-- 単語をそのまま残してInsertモードに入り、カーソルを単語末尾に置く
+		-- blink は現在のカーソル位置の keyword を見て get_completions() を呼ぶ
+		vim.api.nvim_win_set_cursor(0, { pos[1], end_col }) -- 単語末尾（0-indexed）
 
-		-- InsertEnter を待ってから Blink をトリガー
 		local aug = vim.api.nvim_create_augroup("RomajiTranslateBlink", { clear = true })
+
+		-- InsertEnter 後に blink.show() を呼ぶ
 		vim.api.nvim_create_autocmd("InsertEnter", {
 			group = aug,
 			once = true,
 			callback = function()
 				vim.schedule(function()
-					-- blink の補完を手動トリガー
 					require("blink.cmp").show({ sources = { "romaji_translate" } })
 				end)
 			end,
 		})
 
-		-- カーソルが動いたり InsertLeave したら候補をクリア
-		vim.api.nvim_create_autocmd({ "InsertLeave", "CursorMovedI" }, {
+		-- InsertLeave でクリア（キャンセル or 確定後）
+		vim.api.nvim_create_autocmd("InsertLeave", {
 			group = aug,
 			once = true,
 			callback = function()
 				blink_source.clear_pending()
-				vim.api.nvim_del_augroup_by_name("RomajiTranslateBlink")
+				pcall(vim.api.nvim_del_augroup_by_name, "RomajiTranslateBlink")
 			end,
 		})
 
-		vim.cmd("startinsert")
+		vim.cmd("startinsert!") -- ! = カーソルを現在位置の次（末尾）に置く
 	end
 
 	-- 漢字候補リストを全部並列翻訳し、英語候補が揃ったら選択UIを出す

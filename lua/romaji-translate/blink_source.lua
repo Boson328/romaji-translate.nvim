@@ -1,38 +1,38 @@
--- blink.cmp の custom source として機能するモジュール
--- romaji-translate が翻訳候補をここに書き込み、
--- Blink が補完トリガー時に get_completions() を呼んで候補を返す
+-- blink.cmp custom source
+-- 翻訳候補を pending ストアに保存し、get_completions() で返す
 
-local source = {}
+local M = {}
 
--- 翻訳候補を一時保存するストア
--- { items = [...], word = "元の単語", start_col = N, row = N }
+-- 翻訳候補の一時ストア
+-- { items = [{en, kanji}], row = N (1-indexed), start_char = N (0-indexed), word_len = N }
 local pending = nil
 
--- romaji-translate 本体から候補をセットする
-function source.set_pending(data)
+function M.set_pending(data)
 	pending = data
 end
 
-function source.clear_pending()
+function M.clear_pending()
 	pending = nil
 end
 
-function source.has_pending()
+function M.has_pending()
 	return pending ~= nil
 end
 
--- blink.cmp source API --
+-- blink.cmp source オブジェクト --
 
-function source:new()
-	return setmetatable({}, { __index = self })
+local Source = {}
+Source.__index = Source
+
+function Source.new(opts)
+	return setmetatable({}, Source)
 end
 
-function source:get_trigger_characters()
+function Source:get_trigger_characters()
 	return {}
 end
 
--- blink が補完を要求してきたときに候補を返す
-function source:get_completions(ctx, callback)
+function Source:get_completions(ctx, callback)
 	if not pending then
 		callback({ is_incomplete_forward = false, is_incomplete_backward = false, items = {} })
 		return
@@ -42,16 +42,15 @@ function source:get_completions(ctx, callback)
 	for i, item in ipairs(pending.items) do
 		table.insert(items, {
 			label = item.en,
-			detail = item.kanji, -- 右側に漢字を表示
+			detail = item.kanji,
 			insertText = item.en,
-			kind = 1, -- Text kind
-			sortText = string.format("%03d", i), -- 順番を保持
-			-- カーソル位置から単語先頭までを置換範囲に指定
+			kind = vim.lsp.protocol.CompletionItemKind.Text,
+			sortText = string.format("%03d", i),
 			textEdit = {
 				newText = item.en,
 				range = {
-					start = { line = pending.row - 1, character = pending.start_col - 1 },
-					["end"] = { line = pending.row - 1, character = pending.start_col - 1 + #pending.current_text },
+					start = { line = pending.row - 1, character = pending.start_char },
+					["end"] = { line = pending.row - 1, character = pending.start_char + pending.word_len },
 				},
 			},
 		})
@@ -64,13 +63,20 @@ function source:get_completions(ctx, callback)
 	})
 end
 
--- 補完が確定 or キャンセルされたらクリア
-function source:resolve(item, callback)
+function Source:resolve(item, callback)
 	callback(item)
 end
 
-function source:execute(ctx, item)
-	source.clear_pending()
+function Source:execute(ctx, item, callback, default_implementation)
+	M.clear_pending()
+	default_implementation()
+	if callback then
+		callback()
+	end
 end
 
-return source
+function M.new(opts)
+	return Source.new(opts)
+end
+
+return M
