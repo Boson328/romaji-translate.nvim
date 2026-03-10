@@ -498,10 +498,13 @@ function M.translate_word()
 	local is_jp_input = is_japanese_char(word, 1)
 
 	-- 結果を現在行に適用する
-	local function apply_result(result)
+	-- after_word: true のとき単語末尾の次（Insertモード用）にカーソルを置く
+	local function apply_result(result, after_word)
 		local new_line = line:sub(1, start_col - 1) .. result .. line:sub(end_col + 1)
 		vim.api.nvim_set_current_line(new_line)
-		vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 + #result - 1 })
+		local cursor_col = after_word and (start_col - 1 + #result) -- 単語末尾の次（0-indexed）
+			or (start_col - 1 + #result - 1) -- 単語末尾（0-indexed）
+		vim.api.nvim_win_set_cursor(0, { pos[1], cursor_col })
 		if M.config.notify_on_translate then
 			vim.notify(string.format("[RomajiTranslate] %s → %s (%s)", word, result, case_style))
 		end
@@ -532,11 +535,11 @@ function M.translate_word()
 
 				if #unique == 1 then
 					-- 候補が1つなら補完UIを出さずそのまま適用
-					apply_result(unique[1].en)
+					apply_result(unique[1].en, false)
 				else
 					-- 単語を先に置換してからカーソル位置で補完ポップアップを出す
-					-- まず最初の候補で仮置換
-					apply_result(unique[1].en)
+					-- まず最初の候補で仮置換（カーソルを単語末尾の次に置く）
+					apply_result(unique[1].en, true)
 
 					-- vim.fn.complete() 用の候補リストを構築
 					-- word: 補完後に挿入される文字列
@@ -552,13 +555,14 @@ function M.translate_word()
 						})
 					end
 
-					-- InsertEnter してから complete() を呼ぶ
-					-- (Normalモードでは complete() が動かないため)
-					vim.cmd("startinsert")
+					-- complete() はInsertモードでしか動かないので
+					-- <C-x><C-z> で補完をリセットしつつInsertモードに入り、
+					-- その後すぐ complete() を呼ぶ
+					-- カーソルは apply_result() で単語末尾にいる想定
+					local complete_col = start_col -- 1-indexed、単語の開始バイト位置
+					vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-x><C-z>", true, false, true), "n", false)
 					vim.schedule(function()
-						local new_pos = vim.api.nvim_win_get_cursor(0)
-						local new_col = new_pos[2] -- 0-indexed、単語末尾にいる
-						vim.fn.complete(new_col - #unique[1].en + 1, items)
+						vim.fn.complete(complete_col, items)
 					end)
 				end
 			end)
