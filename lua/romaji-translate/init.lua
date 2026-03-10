@@ -2,6 +2,9 @@ local M = {}
 
 M.config = {
 	notify_on_translate = true,
+	-- "plain"（区切りなし小文字）のときに使うデフォルトの命名規則
+	-- "snake_case" | "camelCase" | "PascalCase" | "kebab-case" | "plain"
+	default_case = "snake_case",
 }
 
 -- ローマ字の命名規則を検出
@@ -263,6 +266,49 @@ local function url_encode(str)
 	end):gsub(" ", "+")
 end
 
+-- Google IME 非公式API: ひらがな → 漢字変換
+local function hiragana_to_kanji(text, callback)
+	local encoded = url_encode(text)
+	local url = string.format("https://www.google.com/transliterate?langpair=ja-Hira|ja&text=%s", encoded)
+
+	local cmd = string.format("curl -s -A 'Mozilla/5.0' '%s'", url)
+
+	vim.fn.jobstart(cmd, {
+		stdout_buffered = true,
+		on_stdout = function(_, data)
+			if not data or #data == 0 then
+				callback(text) -- 失敗時はひらがなのまま続行
+				return
+			end
+
+			local raw = table.concat(data, "")
+			local ok, decoded = pcall(vim.fn.json_decode, raw)
+			if not ok or type(decoded) ~= "table" then
+				callback(text) -- 失敗時はひらがなのまま続行
+				return
+			end
+
+			-- レスポンス例: [["とりひき",["取引","取り引き"]],["しょり",["処理"]]]
+			-- 各セグメントの最初の候補を結合する
+			local kanji_parts = {}
+			for _, segment in ipairs(decoded) do
+				local candidates = segment[2]
+				if candidates and candidates[1] then
+					table.insert(kanji_parts, candidates[1])
+				elseif segment[1] then
+					table.insert(kanji_parts, segment[1])
+				end
+			end
+
+			local kanji_text = table.concat(kanji_parts, "")
+			callback(kanji_text ~= "" and kanji_text or text)
+		end,
+		on_stderr = function(_, _)
+			callback(text) -- 失敗時はひらがなのまま続行
+		end,
+	})
+end
+
 -- Google Translate 非公式エンドポイント（APIキー不要）
 local function translate_text(text, callback)
 	local encoded = url_encode(text)
@@ -321,6 +367,10 @@ function M.translate_word()
 	end
 
 	local case_style = detect_case(word)
+	-- "plain" のときはデフォルトの命名規則を使う
+	if case_style == "plain" then
+		case_style = M.config.default_case
+	end
 	local parts = split_identifier(word)
 
 	-- 各パーツをローマ字→ひらがなに変換してスペースで結合
@@ -330,42 +380,52 @@ function M.translate_word()
 	end
 	local hiragana_text = table.concat(hiragana_parts, " ")
 
-	translate_text(hiragana_text, function(translated)
-		local en_words = english_to_words(translated)
-		if #en_words == 0 then
-			vim.notify("[RomajiTranslate] 英語の単語が取得できませんでした", vim.log.levels.ERROR)
-			return
-		end
-
-		local result = format_as_case(en_words, case_style)
-
-		vim.schedule(function()
-			local pos = vim.api.nvim_win_get_cursor(0)
-			local line = vim.api.nvim_get_current_line()
-			local col = pos[2]
-
-			local start_col = col
-			while start_col > 0 and line:sub(start_col, start_col):match("[%w_%-]") do
-				start_col = start_col - 1
-			end
-			if not line:sub(start_col, start_col):match("[%w_%-]") then
-				start_col = start_col + 1
+	-- ひらがな → 漢字 → 英語 の順に変換
+	hiragana_to_kanji(hiragana_text, function(kanji_text)
+		translate_text(kanji_text, function(translated)
+			local en_words = english_to_words(translated)
+			if #en_words == 0 then
+				vim.notify("[RomajiTranslate] 英語の単語が取得できませんでした", vim.log.levels.ERROR)
+				return
 			end
 
-			local end_col = col + 1
-			while end_col <= #line and line:sub(end_col, end_col):match("[%w_%-]") do
-				end_col = end_col + 1
-			end
+			local result = format_as_case(en_words, case_style)
 
-			local new_line = line:sub(1, start_col - 1) .. result .. line:sub(end_col)
-			vim.api.nvim_set_current_line(new_line)
-			vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 + #result - 1 })
+			vim.schedule(function()
+				local pos = vim.api.nvim_win_get_cursor(0)
+				local line = vim.api.nvim_get_current_line()
+				local col = pos[2]
 
-			if M.config.notify_on_translate then
-				vim.notify(
-					string.format("[RomajiTranslate] %s → %s → %s (%s)", word, hiragana_text, result, case_style)
-				)
-			end
+				local start_col = col
+				while start_col > 0 and line:sub(start_col, start_col):match("[%w_%-]") do
+					start_col = start_col - 1
+				end
+				if not line:sub(start_col, start_col):match("[%w_%-]") then
+					start_col = start_col + 1
+				end
+
+				local end_col = col + 1
+				while end_col <= #line and line:sub(end_col, end_col):match("[%w_%-]") do
+					end_col = end_col + 1
+				end
+
+				local new_line = line:sub(1, start_col - 1) .. result .. line:sub(end_col)
+				vim.api.nvim_set_current_line(new_line)
+				vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 + #result - 1 })
+
+				if M.config.notify_on_translate then
+					vim.notify(
+						string.format(
+							"[RomajiTranslate] %s → %s → %s → %s (%s)",
+							word,
+							hiragana_text,
+							kanji_text,
+							result,
+							case_style
+						)
+					)
+				end
+			end)
 		end)
 	end)
 end
