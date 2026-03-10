@@ -1,7 +1,6 @@
 local M = {}
 
 M.config = {
-	api_key = nil, -- Google Translate API key
 	notify_on_translate = true,
 }
 
@@ -25,14 +24,11 @@ end
 local function split_identifier(word)
 	local parts = {}
 
-	-- snake_case or kebab-case
 	if word:match("[_%-]") then
 		for part in word:gmatch("[^_%-]+") do
 			table.insert(parts, part)
 		end
-	-- camelCase or PascalCase
 	elseif word:match("%u") then
-		-- 大文字の前にスペースを入れる（最初の大文字は除く）
 		local spaced = word:gsub("(%u)", function(c)
 			return " " .. c:lower()
 		end):gsub("^ ", "")
@@ -69,42 +65,32 @@ local function format_as_case(words, case_style)
 		end
 		return table.concat(result, "")
 	else
-		-- plain: スペース区切りのままにする
 		return table.concat(words, " ")
 	end
 end
 
--- Google Translate API 呼び出し（curl経由）
-local function translate_text(text, callback)
-	local api_key = M.config.api_key
-	if not api_key then
-		vim.notify("[RomajiTranslate] GOOGLE_TRANSLATE_API_KEY が設定されていません", vim.log.levels.ERROR)
-		return
-	end
+-- URL エンコード
+local function url_encode(str)
+	return str:gsub("([^%w%-%.%_%~ ])", function(c)
+		return string.format("%%%02X", string.byte(c))
+	end):gsub(" ", "+")
+end
 
-	-- ローマ字をスペース区切りにして読みやすくする
+-- Google Translate 非公式エンドポイント（APIキー不要）
+-- レスポンス例: [[["Hello","こんにちは",...]],null,"en",...]
+local function translate_text(text, callback)
+	-- ローマ字をスペース区切りに正規化
 	local spaced = text:gsub("[_%-]", " "):gsub("(%u)", " %1"):lower():gsub("^ ", "")
 
-	local url = string.format("https://translation.googleapis.com/language/translate/v2?key=%s", api_key)
+	local encoded = url_encode(spaced)
+	local url =
+		string.format("https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=ja&tl=en&q=%s", encoded)
 
-	local body = vim.fn.json_encode({
-		q = spaced,
-		source = "ja",
-		target = "en",
-		format = "text",
-	})
+	local cmd = string.format("curl -s -A 'Mozilla/5.0' '%s'", url)
 
-	-- 一時ファイルにbodyを書き出す
-	local tmpfile = vim.fn.tempname()
-	vim.fn.writefile({ body }, tmpfile)
-
-	local cmd = string.format("curl -s -X POST '%s' -H 'Content-Type: application/json' -d @%s", url, tmpfile)
-
-	-- 非同期実行
 	vim.fn.jobstart(cmd, {
 		stdout_buffered = true,
 		on_stdout = function(_, data)
-			vim.fn.delete(tmpfile)
 			if not data or #data == 0 then
 				vim.notify("[RomajiTranslate] レスポンスが空です", vim.log.levels.ERROR)
 				return
@@ -112,25 +98,15 @@ local function translate_text(text, callback)
 
 			local raw = table.concat(data, "")
 			local ok, decoded = pcall(vim.fn.json_decode, raw)
-			if not ok or not decoded then
+			if not ok or type(decoded) ~= "table" then
 				vim.notify("[RomajiTranslate] JSONパースエラー: " .. raw, vim.log.levels.ERROR)
 				return
 			end
 
-			if decoded.error then
-				vim.notify(
-					"[RomajiTranslate] APIエラー: " .. (decoded.error.message or "unknown"),
-					vim.log.levels.ERROR
-				)
-				return
-			end
+			-- レスポンス構造: [[["翻訳結果", "原文", ...], ...], null, "ja", ...]
+			local translated = decoded[1] and decoded[1][1] and decoded[1][1][1]
 
-			local translated = decoded.data
-				and decoded.data.translations
-				and decoded.data.translations[1]
-				and decoded.data.translations[1].translatedText
-
-			if translated then
+			if translated and translated ~= "" then
 				callback(translated)
 			else
 				vim.notify("[RomajiTranslate] 翻訳結果が取得できませんでした", vim.log.levels.ERROR)
@@ -147,7 +123,6 @@ end
 -- 翻訳結果の英語テキストを識別子の単語リストに変換
 local function english_to_words(text)
 	local words = {}
-	-- 小文字化・記号除去・スペース分割
 	local cleaned = text:lower():gsub("[^%a%s]", " ")
 	for w in cleaned:gmatch("%S+") do
 		table.insert(words, w)
@@ -176,9 +151,7 @@ function M.translate_word()
 
 		local result = format_as_case(en_words, case_style)
 
-		-- カーソル下の単語を置換
 		vim.schedule(function()
-			-- ciw で単語を削除して挿入
 			local pos = vim.api.nvim_win_get_cursor(0)
 			local line = vim.api.nvim_get_current_line()
 			local col = pos[2]
@@ -199,8 +172,6 @@ function M.translate_word()
 
 			local new_line = line:sub(1, start_col - 1) .. result .. line:sub(end_col)
 			vim.api.nvim_set_current_line(new_line)
-
-			-- カーソルを変換後の単語末尾に移動
 			vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 + #result - 1 })
 
 			if M.config.notify_on_translate then
@@ -215,12 +186,6 @@ function M.setup(opts)
 	opts = opts or {}
 	M.config = vim.tbl_deep_extend("force", M.config, opts)
 
-	-- 環境変数からAPIキーを自動取得（設定がない場合）
-	if not M.config.api_key then
-		M.config.api_key = vim.env.GOOGLE_TRANSLATE_API_KEY
-	end
-
-	-- コマンド登録
 	vim.api.nvim_create_user_command("RomajiTranslate", function()
 		M.translate_word()
 	end, { desc = "ローマ字の識別子を英語に翻訳して置換" })
