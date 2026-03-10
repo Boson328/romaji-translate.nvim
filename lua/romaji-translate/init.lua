@@ -497,33 +497,82 @@ function M.translate_word()
 	-- 日本語かどうか判定してパイプラインを分岐
 	local is_jp_input = is_japanese_char(word, 1)
 
-	local function do_translate(kanji_text)
-		translate_text(kanji_text, function(translated)
-			local en_words = english_to_words(translated)
-			if #en_words == 0 then
-				vim.notify("[RomajiTranslate] 英語の単語が取得できませんでした", vim.log.levels.ERROR)
-				return
-			end
+	-- 結果を現在行に適用する
+	local function apply_result(result)
+		local new_line = line:sub(1, start_col - 1) .. result .. line:sub(end_col + 1)
+		vim.api.nvim_set_current_line(new_line)
+		vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 + #result - 1 })
+		if M.config.notify_on_translate then
+			vim.notify(string.format("[RomajiTranslate] %s → %s (%s)", word, result, case_style))
+		end
+	end
 
-			local result = format_as_case(en_words, case_style)
+	-- 漢字候補リストを全部並列翻訳し、英語候補が揃ったら選択UIを出す
+	local function translate_all_and_select(kanji_candidates)
+		local total = #kanji_candidates
+		local en_results = {} -- { kanji = "取引処理", en = "transaction_processing" }
+		local done = 0
 
+		local function on_all_done()
 			vim.schedule(function()
-				local new_line = line:sub(1, start_col - 1) .. result .. line:sub(end_col + 1)
-				vim.api.nvim_set_current_line(new_line)
-				vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 + #result - 1 })
+				if #en_results == 0 then
+					vim.notify("[RomajiTranslate] 翻訳結果が取得できませんでした", vim.log.levels.ERROR)
+					return
+				end
 
-				if M.config.notify_on_translate then
-					vim.notify(string.format("[RomajiTranslate] %s → %s (%s)", word, result, case_style))
+				-- 重複除去（英語が同じものは最初だけ残す）
+				local seen = {}
+				local unique = {}
+				for _, item in ipairs(en_results) do
+					if not seen[item.en] then
+						seen[item.en] = true
+						table.insert(unique, item)
+					end
+				end
+
+				if #unique == 1 then
+					-- 候補が1つなら選択UIを出さずそのまま適用
+					apply_result(unique[1].en)
+				else
+					-- 英語候補を選択UIで表示（漢字も併記）
+					local labels = {}
+					for _, item in ipairs(unique) do
+						table.insert(labels, string.format("%-30s  (%s)", item.en, item.kanji))
+					end
+
+					vim.ui.select(labels, {
+						prompt = "翻訳候補を選択: ",
+					}, function(choice, idx)
+						if choice and idx then
+							apply_result(unique[idx].en)
+						end
+					end)
 				end
 			end)
-		end)
+		end
+
+		for _, kanji in ipairs(kanji_candidates) do
+			translate_text(kanji, function(translated)
+				local en_words = english_to_words(translated)
+				if #en_words > 0 then
+					table.insert(en_results, {
+						kanji = kanji,
+						en = format_as_case(en_words, case_style),
+					})
+				end
+				done = done + 1
+				if done == total then
+					on_all_done()
+				end
+			end)
+		end
 	end
 
 	if is_jp_input then
-		-- 日本語入力: そのまま翻訳へ
-		do_translate(word)
+		-- 日本語入力: そのまま1候補として翻訳
+		translate_all_and_select({ word })
 	else
-		-- ローマ字入力: ローマ字→ひらがな→漢字→英語
+		-- ローマ字入力: ローマ字→ひらがな→漢字候補→並列翻訳
 		local parts = split_identifier(word)
 		local hiragana_parts = {}
 		for _, part in ipairs(parts) do
@@ -531,21 +580,8 @@ function M.translate_word()
 		end
 		local hiragana_text = table.concat(hiragana_parts, " ")
 
-		hiragana_to_kanji_candidates(hiragana_text, function(candidates)
-			if #candidates == 1 then
-				-- 候補が1つだけなら選択UIを出さずそのまま翻訳
-				do_translate(candidates[1])
-			else
-				vim.schedule(function()
-					vim.ui.select(candidates, {
-						prompt = "漢字候補を選択: ",
-					}, function(choice)
-						if choice then
-							do_translate(choice)
-						end
-					end)
-				end)
-			end
+		hiragana_to_kanji_candidates(hiragana_text, function(kanji_candidates)
+			translate_all_and_select(kanji_candidates)
 		end)
 	end
 end
