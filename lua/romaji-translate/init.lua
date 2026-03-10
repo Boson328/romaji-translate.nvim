@@ -498,16 +498,107 @@ function M.translate_word()
 	local is_jp_input = is_japanese_char(word, 1)
 
 	-- 結果を現在行に適用する
-	-- after_word: true のとき単語末尾の次（Insertモード用）にカーソルを置く
-	local function apply_result(result, after_word)
+	local function apply_result(result)
 		local new_line = line:sub(1, start_col - 1) .. result .. line:sub(end_col + 1)
 		vim.api.nvim_set_current_line(new_line)
-		local cursor_col = after_word and (start_col - 1 + #result) -- 単語末尾の次（0-indexed）
-			or (start_col - 1 + #result - 1) -- 単語末尾（0-indexed）
-		vim.api.nvim_win_set_cursor(0, { pos[1], cursor_col })
+		vim.api.nvim_win_set_cursor(0, { pos[1], start_col - 1 + #result - 1 })
 		if M.config.notify_on_translate then
 			vim.notify(string.format("[RomajiTranslate] %s → %s (%s)", word, result, case_style))
 		end
+	end
+
+	-- floating window で候補を表示し、選択したものを適用する
+	local function show_float_select(unique)
+		local buf = vim.api.nvim_create_buf(false, true)
+
+		-- ウィンドウの幅: 英語候補 + 漢字の最大幅に合わせる
+		local max_w = 0
+		local lines = {}
+		for i, item in ipairs(unique) do
+			local label = string.format("%d: %-30s %s", i, item.en, item.kanji)
+			table.insert(lines, label)
+			if #label > max_w then
+				max_w = #label
+			end
+		end
+		vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
+		-- カーソル直下に floating window を出す
+		local cur_pos = vim.api.nvim_win_get_cursor(0)
+		local win = vim.api.nvim_open_win(buf, false, {
+			relative = "cursor",
+			row = 1,
+			col = 0,
+			width = max_w + 2,
+			height = #lines,
+			style = "minimal",
+			border = "rounded",
+			title = " 翻訳候補 ",
+			title_pos = "center",
+		})
+
+		-- ハイライト
+		vim.api.nvim_win_set_option(win, "winhl", "Normal:Pmenu,FloatBorder:Pmenu")
+
+		local selected = 1
+
+		local function highlight_selected()
+			vim.api.nvim_buf_clear_namespace(buf, -1, 0, -1)
+			vim.api.nvim_buf_add_highlight(buf, -1, "PmenuSel", selected - 1, 0, -1)
+		end
+		highlight_selected()
+
+		local function close_win()
+			if vim.api.nvim_win_is_valid(win) then
+				vim.api.nvim_win_close(win, true)
+			end
+			if vim.api.nvim_buf_is_valid(buf) then
+				vim.api.nvim_buf_delete(buf, { force = true })
+			end
+		end
+
+		-- キーマップ: j/k/<C-n>/<C-p> で移動、Enter/<C-y> で確定、q/Esc/<C-e> でキャンセル
+		local opts = { nowait = true, noremap = true, silent = true }
+		local function map(key, fn)
+			vim.keymap.set("n", key, fn, vim.tbl_extend("force", opts, { buffer = buf }))
+		end
+
+		local function move(delta)
+			selected = ((selected - 1 + delta) % #unique) + 1
+			highlight_selected()
+		end
+
+		local function confirm()
+			close_win()
+			apply_result(unique[selected].en)
+		end
+
+		local function cancel()
+			close_win()
+			-- 選択なし: 何も変更しない（元の単語のまま）
+		end
+
+		map("j", function()
+			move(1)
+		end)
+		map("k", function()
+			move(-1)
+		end)
+		map("<C-n>", function()
+			move(1)
+		end)
+		map("<C-p>", function()
+			move(-1)
+		end)
+		map("<CR>", confirm)
+		map("<C-y>", confirm)
+		map("q", cancel)
+		map("<Esc>", cancel)
+		map("<C-e>", cancel)
+
+		-- floating window にフォーカスを移す
+		vim.api.nvim_set_current_win(win)
+		vim.api.nvim_win_set_cursor(win, { selected, 0 })
 	end
 
 	-- 漢字候補リストを全部並列翻訳し、英語候補が揃ったら選択UIを出す
@@ -534,41 +625,9 @@ function M.translate_word()
 				end
 
 				if #unique == 1 then
-					-- 候補が1つなら補完UIを出さずそのまま適用
-					apply_result(unique[1].en, false)
+					apply_result(unique[1].en)
 				else
-					-- 単語を先に置換してからカーソル位置で補完ポップアップを出す
-					-- まず最初の候補で仮置換（カーソルを単語末尾の次に置く）
-					apply_result(unique[1].en, true)
-
-					-- vim.fn.complete() 用の候補リストを構築
-					-- word: 補完後に挿入される文字列
-					-- abbr: ポップアップに表示される短縮形（英語）
-					-- menu: ポップアップ右側に表示される補足（元の漢字）
-					local items = {}
-					for _, item in ipairs(unique) do
-						table.insert(items, {
-							word = item.en,
-							abbr = item.en,
-							menu = item.kanji,
-							icase = 1,
-						})
-					end
-
-					-- complete() はInsertモードでしか動かないため
-					-- autocmd で InsertEnter を待ってから呼ぶ
-					local complete_col = start_col -- 1-indexed、単語の開始バイト位置
-					local aug = vim.api.nvim_create_augroup("RomajiTranslateComplete", { clear = true })
-					vim.api.nvim_create_autocmd("InsertEnter", {
-						group = aug,
-						once = true,
-						callback = function()
-							vim.schedule(function()
-								vim.fn.complete(complete_col, items)
-							end)
-						end,
-					})
-					vim.cmd("startinsert")
+					show_float_select(unique)
 				end
 			end)
 		end
